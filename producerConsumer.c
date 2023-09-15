@@ -10,7 +10,7 @@
 #define SEM_PRODUCER_FNAME "/producer"
 #define SEM_CONSUMER_FNAME "/consumer"
 #define NUMPRODUCERS 5
-#define NUMCONSUMERS 5
+#define NUMCONSUMERS 1
 #define NUMRESOURCES 15
 
 // Shared resource between producers and consumers
@@ -30,8 +30,9 @@ void cleanup_threads(pthread_t *threads, int numThreads)
 
 void *produceRes(void *arg)
 {
-    // Open the created semaphore in the main function
+    // Open the created semaphores
     sem_t *semProd = sem_open(SEM_PRODUCER_FNAME, 0);
+    sem_t *semCons = sem_open(SEM_CONSUMER_FNAME, 0);
     // Loop indefinitely
     while (1==1)
     {
@@ -48,7 +49,7 @@ void *produceRes(void *arg)
         // If there are fewer resources than the chosen maximum
         if (resourcesUsed < NUMRESOURCES)
         {
-            //sleep(2);
+            sleep(2);
             // Print the thread currently modifying the resources
             printf("Thread being used %d\n", *(unsigned char *)arg);
             // Update the number of resources
@@ -59,8 +60,8 @@ void *produceRes(void *arg)
         // Unlock the resourcesUsed global variable ready for another thread to modify
         pthread_mutex_unlock(&lock);
 
-        // Signal that the producer semaphore is done
-        if (sem_post(semProd) == -1)
+        // Signal the consumer semaphore that the produce semaphore has added a resource
+        if (sem_post(semCons) == -1)
         {
             // If the signal fails (sem_post == -1), report where the error occured and exit
             perror("sem_post/add");
@@ -72,8 +73,9 @@ void *produceRes(void *arg)
 
 void *consumeRes(void *arg)
 {
-    // Open the created semaphore in the main function
+    // Open the created semaphores
     sem_t *semCons = sem_open(SEM_CONSUMER_FNAME, 0);
+    sem_t *semProd = sem_open(SEM_PRODUCER_FNAME, 0);
     // Loop indefinitely
     while (1==1)
     {
@@ -90,7 +92,7 @@ void *consumeRes(void *arg)
         // If there are resources available
         if (resourcesUsed > 0)
         {
-            //sleep(1);
+            sleep(1);
             // Print the thread currently modifying the resources
             printf("Thread being used %d\n", *(unsigned char *)arg);
             // Update the number of resources
@@ -102,7 +104,7 @@ void *consumeRes(void *arg)
         pthread_mutex_unlock(&lock);
 
         // Signal that the consumer semaphore is done
-        if (sem_post(semCons) == -1)
+        if (sem_post(semProd) == -1)
         {
             // If the signal fails (sem_post == -1), report where the error occured and exit
             perror("sem_post/remove");
@@ -131,14 +133,14 @@ int main()
     sem_unlink(SEM_CONSUMER_FNAME);
 
     // Initialise semaphores for producers
-    sem_t *semProd = sem_open(SEM_PRODUCER_FNAME, O_CREAT, 0660, 5);
+    sem_t *semProd = sem_open(SEM_PRODUCER_FNAME, O_CREAT, 0660, NUMRESOURCES);
     if (semProd == SEM_FAILED) {
         // If sem_open failed, report this and exit
         perror("sem_open/producer");
         exit(EXIT_FAILURE);
     }
-    // Initialise semaphores for producers
-    sem_t *semCons = sem_open(SEM_CONSUMER_FNAME, O_CREAT, 0660, 5);
+    // Initialise semaphores for consumers
+    sem_t *semCons = sem_open(SEM_CONSUMER_FNAME, O_CREAT, 0660, 0);
     if (semCons == SEM_FAILED) {
         // If sem_open failed, report this and exit
         perror("sem_open/consumer");
