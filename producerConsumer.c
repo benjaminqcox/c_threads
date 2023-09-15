@@ -133,6 +133,8 @@ int main()
     sem_unlink(SEM_CONSUMER_FNAME);
 
     // Initialise semaphores for producers
+    // NUMRESOURCES is used here to set the number of resoures the producer can use to make resources
+    // e.g. NUMRESOURCES = 15 -> 15 resources can be made
     sem_t *semProd = sem_open(SEM_PRODUCER_FNAME, O_CREAT, 0660, NUMRESOURCES);
     if (semProd == SEM_FAILED) {
         // If sem_open failed, report this and exit
@@ -140,6 +142,7 @@ int main()
         exit(EXIT_FAILURE);
     }
     // Initialise semaphores for consumers
+    // 0 is used here as the consumer should not be able to consume any resources while there aren't any
     sem_t *semCons = sem_open(SEM_CONSUMER_FNAME, O_CREAT, 0660, 0);
     if (semCons == SEM_FAILED) {
         // If sem_open failed, report this and exit
