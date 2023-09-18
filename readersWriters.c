@@ -4,18 +4,26 @@
 #include <semaphore.h>
 #include <unistd.h>
 
-#define SEM_READER_FNAME "/reader"
+// Set the number of read and write threads
+#define NUM_READ_THREADS 5
+#define NUM_WRITE_THREADS 5
+
+// Set the file name the semaphore will use
 #define SEM_WRITER_FNAME "/writer"
+// Define the file that will be read and written to
 #define FPATH "textdoc.txt"
-#define READWRITE "a"
-#define READONLY "r"
+// Define the file mode
+#define READWRITE "w+"
 
-sem_t readerSem, writerSem;
-
+// Declare the writer semaphore and mutex lock
+sem_t writerSem;
 pthread_mutex_t lock;
 
-// Shared file
+// Declare shared file pointer
 FILE *fptr;
+
+// Initialise the number of readers currently reading to 0
+int readerCount = 0;
 
 
 void *fileWriter(void *arg)
@@ -23,28 +31,20 @@ void *fileWriter(void *arg)
     // Loop indefinitely
     while (1)
     {
-        // Wait for resources
+        // Wait for write semaphore to be available
         sem_wait(&writerSem);
-        // Activate the mutex lock
+        // Only one writer allowed at a time so a lock has been used
         pthread_mutex_lock(&lock);
-        // Open the file in READWRITE mode and verify it openned correctly
-        if ((fptr = fopen(FPATH, READWRITE)) == NULL)
-        {
-            fprintf(stderr, "Failed to open file\n");
-            exit(EXIT_FAILURE);
-        }
-        // Sleep for 10_000 microseconds
-        usleep(10000);
+        // Add some delay to help with reading the output
+        usleep(1000);
         // Write some text to the open file
         fprintf(fptr, "Some text... \n");
         // Ensure the data was written immediately
         fflush(fptr);
-        // Close the file
-        fclose(fptr);
         // Release the mutex lock
         pthread_mutex_unlock(&lock);
-        // Signal the reader to start reading
-        sem_post(&readerSem);
+        // Release the writer
+        sem_post(&writerSem);
     }
     
     return NULL;
@@ -55,19 +55,21 @@ void *fileReader(void *arg)
     // Loop indefinitely
     while(1)
     {
-        // Wait for resources
-        sem_wait(&readerSem);
         // Activate the mutex lock
         pthread_mutex_lock(&lock);
-        // Open the file in READONLY mode and verify it openned correctly
-        if ((fptr = fopen(FPATH, READONLY)) == NULL)
+        // Increment the number of threads reading the file
+        readerCount++;
+        // If there are more than 0 readers, lock the writer
+        if (readerCount > 0)
         {
-            fprintf(stderr, "Failed to open file\n");
-            exit(EXIT_FAILURE);
+            printf("reader count: %d", readerCount);
+            // Lock the writer so that no writer can write while there is a reader
+            sem_wait(&writerSem);
         }
-       
-        // Sleep for 1_000 microseconds
-        usleep(1000);
+        // Deactivate the mutex lock so other readers can have access
+        pthread_mutex_unlock(&lock);
+        // Add some delay for output reading
+        usleep(10000);
         // Declare a buffer to store string (file contents)
         char buffer[BUFSIZ];
         // Get a pointer to the initial character in the file
@@ -78,69 +80,94 @@ void *fileReader(void *arg)
             // Print the file contents
             printf("%s", buffer);
         }
-        // Close the file
-        fclose (fptr);
+        // Lock the reader count resources
+        pthread_mutex_lock(&lock);
+        // Done reading on this thread so decrement the readerCount
+        readerCount--;
+        // If there are no more readers, allow the writer to write
+        if (readerCount == 0)
+        {
+            // Signal the writer it can start writing
+            sem_post(&writerSem);
+        }
         // Release the mutex lock
         pthread_mutex_unlock(&lock);
-        // Signal the writer to start writing
-        sem_post(&writerSem);
-    }
-    // Close the file
-    
+    } 
     return NULL;
 }
 
 
 int main()
 {
+    // Open the file in READWRITE mode and verify it openned correctly
+    if ((fptr = fopen(FPATH, READWRITE)) == NULL)
+    {
+        fprintf(stderr, "Failed to open file\n");
+        exit(EXIT_FAILURE);
+    }
+
     // Initialise the mutex lock
     pthread_mutex_init(&lock, NULL);
 
     // Remove any existing semaphores at the chosen file location
-    sem_unlink(SEM_READER_FNAME);
     sem_unlink(SEM_WRITER_FNAME);
 
     // Create a writer semaphore at the given file location
-    if (sem_open(SEM_READER_FNAME, O_CREAT, 0660, 1) == SEM_FAILED) {
-        // If sem_open failed, report this and exit
-        perror("sem_open/readerSem");
-        exit(EXIT_FAILURE);
-    }
-
-    // Create a writer semaphore at the given file location
-    if (sem_open(SEM_WRITER_FNAME, O_CREAT, 0660, 0) == SEM_FAILED) {
+    if (sem_open(SEM_WRITER_FNAME, O_CREAT, 0660, 5) == SEM_FAILED) {
         // If sem_open failed, report this and exit
         perror("sem_open/writerSem");
         exit(EXIT_FAILURE);
     }
 
-    pthread_t readerThread, writerThread;
-    // Create reader thread and give it the fileReader function
-    if (pthread_create(&readerThread, NULL, &fileReader, NULL) != 0)
+    // Declare threads for reading and writing
+    pthread_t readerThreads[NUM_READ_THREADS];
+    pthread_t writerThreads[NUM_WRITE_THREADS];
+
+    // Create all reader threads
+    for (int i = 0; i < NUM_READ_THREADS; i++)
     {
-        printf("Failed to create reader thread.\n");
-        exit(EXIT_FAILURE);
+        // Create reader thread and give it the fileReader function
+        if (pthread_create(&readerThreads[i], NULL, &fileReader, NULL) != 0)
+        {
+            printf("Failed to create reader thread.\n");
+            exit(EXIT_FAILURE);
+        }
     }
 
-    // Create writer thread and give it the fileWriter function
-    if (pthread_create(&writerThread, NULL, &fileWriter, NULL) != 0)
+    // Create all writer threads
+    for (int i = 0; i < NUM_WRITE_THREADS; i++)
     {
-        printf("Failed to create writer thread.\n");
-        exit(EXIT_FAILURE);
+        // Create writer thread and give it the fileWriter function
+        if (pthread_create(&writerThreads[i], NULL, &fileWriter, NULL) != 0)
+        {
+            printf("Failed to create writer thread.\n");
+            exit(EXIT_FAILURE);
+        }
     }
     
-    // Wait for reader thread to finish
-    if (pthread_join(readerThread, NULL) != 0)
+    // Join all reader threads
+    for (int i = 0; i < NUM_READ_THREADS; i++)
     {
-        printf("Failed to join reader thread.\n");
-        exit(EXIT_FAILURE);
+        // Wait for reader thread to finish
+        if (pthread_join(readerThreads[i], NULL) != 0)
+        {
+            printf("Failed to join reader thread.\n");
+            exit(EXIT_FAILURE);
+        }
     }
-
-    // Wait for writer thread to finish
-    if (pthread_join(writerThread, NULL) != 0)
+    
+    // Join all writer threads
+    for (int i = 0; i < NUM_WRITE_THREADS; i++)
     {
-        printf("Failed to join writer thread.\n");
-        exit(EXIT_FAILURE);
+        // Wait for writer thread to finish
+        if (pthread_join(writerThreads[i], NULL) != 0)
+        {
+            printf("Failed to join writer thread.\n");
+            exit(EXIT_FAILURE);
+        }
     }
+    
+    // Close file
+    fclose(fptr);
     return 0;
 }
